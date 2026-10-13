@@ -334,6 +334,12 @@
         .reader-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .reader-status { font-size: 0.78rem; color: var(--text-light); margin-left: auto; }
         .reader-unsupported { font-size: 0.78rem; color: var(--text-light); font-style: italic; }
+        .reader-voice-select {
+            padding: 6px 10px; border-radius: 20px; border: 1px solid var(--border); background: white;
+            color: var(--text-medium); font-size: 0.78rem; font-family: 'Noto Sans SC', sans-serif;
+            max-width: 220px; cursor: pointer;
+        }
+        .reader-voice-select:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .modal-body { padding: 28px; overflow-y: auto; line-height: 2; color: var(--text-medium); font-size: 1rem; }
         .modal-body p { margin-bottom: 15px; text-indent: 2em; }
@@ -534,6 +540,7 @@
                 <button class="reader-btn" id="readerPlayBtn" onclick="readerPlay()">▶ 朗读</button>
                 <button class="reader-btn" id="readerPauseBtn" onclick="readerPauseResume()" disabled>⏸ 暂停</button>
                 <button class="reader-btn" id="readerStopBtn" onclick="readerStop()" disabled>⏹ 停止</button>
+                <select class="reader-voice-select" id="readerVoiceSelect" onchange="onVoiceChange()" title="选择朗读声音"></select>
                 <span class="reader-status" id="readerStatus"></span>
             </div>
             <div class="modal-body" id="modalBody">内容</div>
@@ -725,12 +732,62 @@
         let ttsIndex = 0;
         let ttsPaused = false;
         let zhVoice = null;
+        let zhVoices = [];
+        let voicePickedManually = false;
+
+        // Higher score = sounds more natural. Browsers expose cloud/neural voices
+        // (marked "Online"/"Natural"/"Neural") alongside low-quality offline ones;
+        // this ranks the good ones first so they're picked automatically.
+        function voiceScore(v) {
+            const name = (v.name || '').toLowerCase();
+            const lang = (v.lang || '').toLowerCase();
+            let score = 0;
+            if (lang === 'zh-cn') score += 50;
+            else if (lang.startsWith('zh')) score += 20;
+            if (/online|natural|neural|cloud/.test(name)) score += 100;
+            if (/xiaoxiao|yunxi|yunyang|xiaoyi|xiaomo|xiaoxuan/.test(name)) score += 30;
+            if (/google/.test(name)) score += 40;
+            if (!v.localService) score += 15; // network/cloud-backed voices usually sound better
+            return score;
+        }
 
         function pickVoice() {
             if (!ttsSupported) return;
             const voices = window.speechSynthesis.getVoices();
-            zhVoice = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('zh')) || null;
+            zhVoices = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('zh'))
+                              .sort((a, b) => voiceScore(b) - voiceScore(a));
+            if (!voicePickedManually) {
+                zhVoice = zhVoices[0] || null;
+            }
+            renderVoiceSelect();
         }
+
+        function renderVoiceSelect() {
+            const sel = document.getElementById('readerVoiceSelect');
+            if (!sel) return;
+            if (zhVoices.length === 0) {
+                sel.innerHTML = '<option value="">默认声音</option>';
+                sel.disabled = true;
+                return;
+            }
+            sel.disabled = false;
+            sel.innerHTML = zhVoices.map((v, i) => {
+                const label = /online|natural|neural|cloud/i.test(v.name) ? `${v.name} ★` : v.name;
+                return `<option value="${i}">${escapeHtml(label)}</option>`;
+            }).join('');
+            const idx = zhVoices.indexOf(zhVoice);
+            sel.value = idx >= 0 ? idx : 0;
+        }
+
+        function onVoiceChange() {
+            const sel = document.getElementById('readerVoiceSelect');
+            const idx = parseInt(sel.value, 10);
+            if (!isNaN(idx) && zhVoices[idx]) {
+                zhVoice = zhVoices[idx];
+                voicePickedManually = true;
+            }
+        }
+
         if (ttsSupported) {
             pickVoice();
             window.speechSynthesis.onvoiceschanged = pickVoice;
@@ -743,6 +800,7 @@
             const status = document.getElementById('readerStatus');
             if (!ttsSupported) {
                 playBtn.disabled = true; pauseBtn.disabled = true; stopBtn.disabled = true;
+                document.getElementById('readerVoiceSelect').disabled = true;
                 status.textContent = '此浏览器不支持朗读功能';
                 return;
             }
